@@ -8,7 +8,8 @@ use clap::*;
 use futures::stream::BoxStream;
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path;
-use object_store::{DynObjectStore, ObjectMeta};
+use object_store::{ClientOptions, DynObjectStore, ObjectMeta};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -169,6 +170,18 @@ impl ObjectStoreConfig {
         if let Some(account) = &self.google_service_account {
             builder = builder.with_service_account_path(account);
         }
+        let mut headers = HeaderMap::new();
+
+        let header_name = HeaderName::from_static("x-goog-user-project");
+        let header_name1 = HeaderName::from_static("userproject");
+
+        let header_value = HeaderValue::from_str("fullnode-snapshot-gcs")?;
+
+        // Insert the header into the HeaderMap
+        headers.insert(header_name, header_value.clone());
+        headers.insert(header_name1, header_value);
+
+        builder = builder.with_client_options(ClientOptions::new().with_default_headers(headers));
 
         Ok(Arc::new(LimitStore::new(
             builder.build().context("Invalid gcs config")?,
