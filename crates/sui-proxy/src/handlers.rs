@@ -37,6 +37,14 @@ static HTTP_HANDLER_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     .unwrap()
 });
 
+// Remove below once I end up merging BridgePeer & SuiPeer
+
+// Extension(BridgePeer {
+//     http_rest_url,
+//     bridge_public_key,
+//     sui_address,
+// }): Extension<BridgePeer>,
+
 /// Publish handler which receives metrics from nodes.  Nodes will call us at this endpoint
 /// and we relay them to the upstream tsdb
 ///

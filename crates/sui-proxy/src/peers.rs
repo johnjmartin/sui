@@ -47,7 +47,7 @@ static JSON_RPC_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
 
 /// SuiNods a mapping of public key to SuiPeer data
 pub type SuiPeers = Arc<RwLock<HashMap<Ed25519PublicKey, SuiPeer>>>;
-pub type BridgePeers = Arc<RwLock<HashMap<Ed25519PublicKey, BridgePeer>>>;
+// pub type BridgePeers = Arc<RwLock<HashMap<Ed25519PublicKey, BridgePeer>>>;
 
 /// A SuiPeer is the collated sui chain data we have about validators
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
@@ -57,12 +57,12 @@ pub struct SuiPeer {
     pub public_key: Ed25519PublicKey,
 }
 /// A BridgePeer is the collated sui chain data we have about validators
-#[derive(Hash, PartialEq, Eq, Debug, Clone)]
-pub struct BridgePeer {
-    pub http_rest_url: String,
-    pub sui_address: SuiAddress,
-    pub public_key: Ed25519PublicKey,
-}
+// #[derive(Hash, PartialEq, Eq, Debug, Clone)]
+// pub struct BridgePeer {
+//     pub http_rest_url: String,
+//     pub sui_address: SuiAddress,
+//     pub bridge_public_key: Ed25519PublicKey,
+// }
 
 /// SuiNodeProvider queries the sui blockchain and keeps a record of known validators based on the response from
 /// sui_getValidators.  The node name, public key and other info is extracted from the chain and stored in this
@@ -71,7 +71,6 @@ pub struct BridgePeer {
 #[derive(Debug, Clone)]
 pub struct SuiNodeProvider {
     nodes: SuiPeers,
-    bridge_nodes: BridgePeers,
     static_nodes: SuiPeers,
     rpc_url: String,
     rpc_poll_interval: Duration,
@@ -81,7 +80,6 @@ impl Allower for SuiNodeProvider {
     fn allowed(&self, key: &Ed25519PublicKey) -> bool {
         self.static_nodes.read().unwrap().contains_key(key)
             || self.nodes.read().unwrap().contains_key(key)
-            || self.bridge_nodes.read().unwrap().contains_key(key)
     }
 }
 
@@ -94,10 +92,8 @@ impl SuiNodeProvider {
             .collect();
         let static_nodes = Arc::new(RwLock::new(static_nodes));
         let nodes = Arc::new(RwLock::new(HashMap::new()));
-        let bridge_nodes = Arc::new(RwLock::new(HashMap::new()));
         Self {
             nodes,
-            bridge_nodes,
             static_nodes,
             rpc_url,
             rpc_poll_interval,
@@ -123,6 +119,10 @@ impl SuiNodeProvider {
                 public_key: v.public_key.to_owned(),
             });
         }
+
+        // if let Some(v) = self.bridge_nodes.read().unwrap().get(key) {
+        //     return
+        // }
         None
     }
     /// Get a reference to the inner service
@@ -270,7 +270,6 @@ impl SuiNodeProvider {
         let rpc_poll_interval = self.rpc_poll_interval;
         let rpc_url = self.rpc_url.to_owned();
         let bridge_rpc_url = self.rpc_url.to_owned();
-        let bridge_nodes = self.bridge_nodes.clone();
         let nodes = self.nodes.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(rpc_poll_interval);
@@ -302,19 +301,10 @@ impl SuiNodeProvider {
                         error!("unable to refresh peer list: {error}")
                     }
                 }
-            }
-        });
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(rpc_poll_interval);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-            loop {
-                interval.tick().await;
-
                 match Self::get_bridge_validators(bridge_rpc_url.clone()).await {
                     Ok(summary) => {
                         let extracted = extract_bridge(summary).await;
-                        let mut allow = bridge_nodes.write().unwrap();
+                        let mut allow = nodes.write().unwrap();
                         allow.clear();
                         allow.extend(extracted);
                         info!(
@@ -336,10 +326,42 @@ impl SuiNodeProvider {
                 }
             }
         });
+        // tokio::spawn(async move {
+        //     let mut interval = tokio::time::interval(rpc_poll_interval);
+        //     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        //     loop {
+        //         interval.tick().await;
+
+        //         match Self::get_bridge_validators(bridge_rpc_url.clone()).await {
+        //             Ok(summary) => {
+        //                 let extracted = extract_bridge(summary).await;
+        //                 let mut allow = bridge_nodes.write().unwrap();
+        //                 allow.clear();
+        //                 allow.extend(extracted);
+        //                 info!(
+        //                     "{} sui bridge peers managed to make it on the allow list",
+        //                     allow.len()
+        //                 );
+        //                 info!("confirming the structure of our map {:?}", allow);
+
+        //                 JSON_RPC_STATE
+        //                     .with_label_values(&["update_bridge_peer_count", "success"])
+        //                     .inc_by(allow.len() as f64);
+        //             }
+        //             Err(error) => {
+        //                 JSON_RPC_STATE
+        //                     .with_label_values(&["update_bridge_peer_count", "failed"])
+        //                     .inc();
+        //                 error!("unable to refresh sui bridge peer list: {error}")
+        //             }
+        //         }
+        //     }
+        // });
     }
 }
 
-async fn extract_bridge(summary: BridgeSummary) -> Vec<(Ed25519PublicKey, BridgePeer)> {
+async fn extract_bridge(summary: BridgeSummary) -> Vec<(Ed25519PublicKey, SuiPeer)> {
     let client = reqwest::Client::builder().build().unwrap();
     let results: Vec<_> = stream::iter(summary.committee.members)
         .filter(|(_, x)| {
@@ -368,20 +390,10 @@ async fn extract_bridge(summary: BridgeSummary) -> Vec<(Ed25519PublicKey, Bridge
                         return None;
                     }
                 };
-                // info!("here's the whole key: {:?}", metrics_pub_key);
-                // match Ed25519KeyPair::decode_base64(&metrics_pub_key) {
-                //     Ok(key) => {
-                //         let pubickey: Ed25519PublicKey = key.public().clone();
-                //         error!("here's the pub key: {:?}", pubickey);
-                //     }
-                //     Err(error) => {
-                //         error!(
-                //             "unable to decode key pair for bridge node {:?} error: {error}",
-                //             bridge_node_url
-                //         );
-                //     }
-                // }
                 let metrics_bytes = Base64::decode(&metrics_pub_key).unwrap();
+                let fake_p2p_addr: Multiaddr = "/ip4/127.0.0.1/tcp/10000"
+                    .parse()
+                    .expect("expected a multiaddr value");
                 match Ed25519PublicKey::from_bytes(&metrics_bytes) {
                     Ok(metrics_key) => {
                         debug!(
@@ -390,10 +402,10 @@ async fn extract_bridge(summary: BridgeSummary) -> Vec<(Ed25519PublicKey, Bridge
                         );
                         Some((
                             metrics_key.clone(),
-                            BridgePeer {
-                                sui_address: cm.sui_address.clone(),
+                            SuiPeer {
+                                p2p_address: fake_p2p_addr,
                                 public_key: metrics_key.clone(),
-                                http_rest_url: bridge_node_url,
+                                name: "johntest".to_string(),
                             },
                         ))
                     }
@@ -512,7 +524,7 @@ mod tests {
         base_types::ObjectID,
         bridge::{
             BridgeCommitteeSummary, BridgeLimiterSummary, BridgeTreasurySummary,
-            MoveTypeBridgeCommittee, MoveTypeCommitteeMember,
+            MoveTypeCommitteeMember,
         },
         sui_system_state::sui_system_state_summary::{SuiSystemStateSummary, SuiValidatorSummary},
     };
