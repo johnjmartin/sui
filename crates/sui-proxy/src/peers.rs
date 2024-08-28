@@ -10,6 +10,7 @@ use once_cell::sync::Lazy;
 use prometheus::{register_counter_vec, register_histogram_vec};
 use prometheus::{CounterVec, HistogramVec};
 use serde::Deserialize;
+use std::thread;
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -245,6 +246,23 @@ impl SuiNodeProvider {
         let rpc_poll_interval = self.rpc_poll_interval;
         let rpc_url = self.rpc_url.to_owned();
         let nodes = self.nodes.clone();
+        fn spawn_clear_thread(
+            nodes: Arc<RwLock<HashMap<Ed25519PublicKey, AllowedPeer>>>,
+            clear_interval: Duration,
+        ) {
+            thread::spawn(move || {
+                loop {
+                    // Wait for the specified interval
+                    thread::sleep(clear_interval);
+
+                    // Clear the HashMap
+                    let mut allow = nodes.write().unwrap();
+                    allow.clear();
+                    println!("Cleared the nodes HashMap");
+                }
+            });
+        }
+        spawn_clear_thread(nodes.clone(), Duration::from_secs(600)); // Example: clear every 600 seconds
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(rpc_poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -255,9 +273,8 @@ impl SuiNodeProvider {
                 match Self::get_validators(rpc_url.to_owned()).await {
                     Ok(summary) => {
                         let peers = extract(summary);
-                        // maintain the tls acceptor set
                         let mut allow = nodes.write().unwrap();
-                        allow.clear();
+                        // maintain the tls acceptor set
                         allow.extend(peers);
                         info!(
                             "{} sui peers managed to make it on the allow list",
@@ -278,7 +295,6 @@ impl SuiNodeProvider {
                     Ok(summary) => {
                         let extracted = extract_bridge(summary).await;
                         let mut allow = nodes.write().unwrap();
-                        allow.clear();
                         allow.extend(extracted);
                         info!(
                             "{} sui bridge peers managed to make it on the allow list",
