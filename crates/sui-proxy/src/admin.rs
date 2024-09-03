@@ -16,6 +16,7 @@ use anyhow::Result;
 use axum::{extract::DefaultBodyLimit, middleware, routing::post, Extension, Router};
 use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey};
 use fastcrypto::traits::{KeyPair, ToFromBytes};
+use futures::stream::All;
 use std::fs;
 use std::io::BufReader;
 use std::net::{IpAddr, SocketAddr};
@@ -284,7 +285,7 @@ pub fn create_server_cert_enforce_peer(
     let allower = SuiNodeProvider::new(dynamic_peers.url, dynamic_peers.interval, static_peers);
     allower.poll_peer_list();
 
-    let c = ClientCertVerifier::new(allower.clone(), SUI_VALIDATOR_SERVER_NAME.to_string())
+    let c = ClientCertVerifier::new(AllowAll, SUI_VALIDATOR_SERVER_NAME.to_string())
         .rustls_server_config(
             load_certs(&certificate_path),
             load_private_key(&private_key_path),

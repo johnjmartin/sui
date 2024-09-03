@@ -111,7 +111,6 @@ pub async fn expect_valid_bridge_key(
 ) -> Result<Response, (StatusCode, &'static str)> {
     // Check if the request path matches "/publish/bridge/metrics"
     if request.uri().path() != "/publish/bridge/metrics" {
-        info!("skipping expect_valid_bridge_key for sui validator push");
         return Ok(next.run(request).await);
     }
 
