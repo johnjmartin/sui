@@ -116,10 +116,10 @@ pub fn app(
         router = add_sui_allower_routes(router, allower);
     }
 
-    // // Add the bridge_allower specific routes and middleware
-    // if let Some(allower) = bridge_allower {
-    //     router = add_bridge_allower_routes(router, allower);
-    // }
+    // Add the bridge_allower specific routes and middleware
+    if let Some(allower) = bridge_allower {
+        router = add_bridge_allower_routes(router, allower);
+    }
 
     // Add common layers to the router
     router
