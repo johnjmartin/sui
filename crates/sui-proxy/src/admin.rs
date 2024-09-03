@@ -1,11 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
+use crate::bridge::BridgeValidatorProvider;
 use crate::config::{DynamicPeerValidationConfig, RemoteWriteConfig, StaticPeerValidationConfig};
 use crate::handlers::publish_metrics;
 use crate::histogram_relay::HistogramRelay;
 use crate::ip::{is_private, to_multiaddr};
 use crate::middleware::{
-    expect_content_length, expect_mysten_proxy_header, expect_valid_public_key,
+    expect_content_length, expect_mysten_proxy_header, expect_valid_bridge_key,
+    expect_valid_public_key,
 };
 use crate::peers::{SuiNodeProvider, SuiPeer};
 use crate::var;
@@ -96,9 +98,10 @@ pub fn app(
     labels: Labels,
     client: ReqwestClient,
     relay: HistogramRelay,
-    allower: Option<SuiNodeProvider>,
+    sui_allower: Option<SuiNodeProvider>,
+    bridge_allower: Option<BridgeValidatorProvider>,
 ) -> Router {
-    // build our application with a route and our sender mpsc
+    // Build the base router with common routes
     let mut router = Router::new()
         .route("/publish/metrics", post(publish_metrics))
         .route_layer(DefaultBodyLimit::max(var!(
@@ -107,11 +110,18 @@ pub fn app(
         )))
         .route_layer(middleware::from_fn(expect_mysten_proxy_header))
         .route_layer(middleware::from_fn(expect_content_length));
-    if let Some(allower) = allower {
-        router = router
-            .route_layer(middleware::from_fn(expect_valid_public_key))
-            .layer(Extension(Arc::new(allower)));
+
+    // Add the sui_allower specific routes and middleware
+    if let Some(allower) = sui_allower {
+        router = add_sui_allower_routes(router, allower);
     }
+
+    // // Add the bridge_allower specific routes and middleware
+    // if let Some(allower) = bridge_allower {
+    //     router = add_bridge_allower_routes(router, allower);
+    // }
+
+    // Add common layers to the router
     router
         .layer(Extension(relay))
         .layer(Extension(labels))
@@ -125,6 +135,22 @@ pub fn app(
                 ),
             ),
         )
+}
+
+/// Add routes and middleware specific to the SuiNodeProvider allower
+fn add_sui_allower_routes(router: Router, allower: SuiNodeProvider) -> Router {
+    router
+        .route_layer(middleware::from_fn(expect_valid_public_key))
+        .layer(Extension(Arc::new(allower)))
+}
+
+/// Add routes and middleware specific to the BridgeValidatorProvider allower
+fn add_bridge_allower_routes(router: Router, allower: BridgeValidatorProvider) -> Router {
+    allower.poll_peer_list();
+    router
+        .route("/publish/bridge/metrics", post(publish_metrics)) // New route
+        .route_layer(middleware::from_fn(expect_valid_bridge_key)) // Bridge-specific middleware
+        .layer(Extension(Arc::new(allower)))
 }
 
 /// Server creates our http/https server
@@ -257,6 +283,7 @@ pub fn create_server_cert_enforce_peer(
     })?;
     let allower = SuiNodeProvider::new(dynamic_peers.url, dynamic_peers.interval, static_peers);
     allower.poll_peer_list();
+
     let c = ClientCertVerifier::new(allower.clone(), SUI_VALIDATOR_SERVER_NAME.to_string())
         .rustls_server_config(
             load_certs(&certificate_path),

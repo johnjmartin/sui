@@ -1,5 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
+use crate::bridge::BridgeValidatorProvider;
+use crate::peers::SuiPeer;
 use crate::{consumer::ProtobufDecoder, peers::SuiNodeProvider};
 use axum::{
     async_trait,
@@ -92,6 +94,39 @@ pub async fn expect_valid_public_key(
         return Err((StatusCode::FORBIDDEN, "unknown clients are not allowed"));
     };
     request.extensions_mut().insert(peer);
+    Ok(next.run(request).await)
+}
+
+/// we expect that calling sui-nodes are known on the blockchain and we enforce
+/// their pub key tls creds here
+pub async fn expect_valid_bridge_key(
+    Extension(allower): Extension<Arc<BridgeValidatorProvider>>,
+    Extension(tls_connect_info): Extension<TlsConnectionInfo>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Result<Response, (StatusCode, &'static str)> {
+    let Some(public_key) = tls_connect_info.public_key() else {
+        error!("unable to obtain public key from connecting client");
+        MIDDLEWARE_OPS
+            .with_label_values(&["expect_valid_public_key", "missing-public-key"])
+            .inc();
+        return Err((StatusCode::FORBIDDEN, "unknown clients are not allowed"));
+    };
+    let Some(peer) = allower.get(public_key) else {
+        error!("node with unknown pub key tried to connect {}", public_key);
+        MIDDLEWARE_OPS
+            .with_label_values(&[
+                "expect_valid_public_key",
+                "unknown-validator-connection-attempt",
+            ])
+            .inc();
+        return Err((StatusCode::FORBIDDEN, "unknown clients are not allowed"));
+    };
+    request.extensions_mut().insert(SuiPeer {
+        name: peer.name,
+        public_key: peer.public_key,
+        p2p_address: multiaddr::Multiaddr::empty(),
+    });
     Ok(next.run(request).await)
 }
 

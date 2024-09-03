@@ -40,6 +40,8 @@ prost.workspace = true
 once_cell.workspace = true
 hex.workspace = true
 ipnetwork.workspace = true
+futures.workspace = true
+url.workspace = true
 
 
 telemetry-subscribers.workspace = true

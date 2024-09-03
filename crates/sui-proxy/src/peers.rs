@@ -17,7 +17,7 @@ use sui_tls::Allower;
 use sui_types::sui_system_state::sui_system_state_summary::SuiSystemStateSummary;
 use tracing::{debug, error, info};
 
-static JSON_RPC_STATE: Lazy<CounterVec> = Lazy::new(|| {
+pub static JSON_RPC_STATE: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "json_rpc_state",
         "Number of successful/failed requests made.",
@@ -25,7 +25,7 @@ static JSON_RPC_STATE: Lazy<CounterVec> = Lazy::new(|| {
     )
     .unwrap()
 });
-static JSON_RPC_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+pub static JSON_RPC_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         "json_rpc_duration_seconds",
         "The json-rpc latencies in seconds.",

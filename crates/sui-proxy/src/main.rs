@@ -3,6 +3,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::env;
+use sui_proxy::bridge::BridgeValidatorProvider;
 use sui_proxy::config::ProxyConfig;
 use sui_proxy::{
     admin::{
@@ -57,10 +58,15 @@ async fn main() -> Result<()> {
 
     let listener = std::net::TcpListener::bind(config.listen_address).unwrap();
 
-    let (tls_config, allower) =
+    let mut bridge_allower = Some(BridgeValidatorProvider::new(
+        config.dynamic_peers.url.clone(),
+        config.dynamic_peers.interval,
+    ));
+    let (tls_config, sui_allower) =
         // we'll only use the dynamic peers in some cases - it makes little sense to run with the statics
         // since this first mode allows all.
         if config.dynamic_peers.certificate_file.is_none() || config.dynamic_peers.private_key.is_none() {
+            bridge_allower = None;
             (
                 create_server_cert_default_allow(config.dynamic_peers.hostname.unwrap())
                     .expect("unable to create self-signed server cert"),
@@ -92,7 +98,8 @@ async fn main() -> Result<()> {
         },
         client,
         histogram_relay,
-        allower,
+        sui_allower,
+        bridge_allower,
     );
 
     server(listener, app, Some(acceptor)).await.unwrap();
