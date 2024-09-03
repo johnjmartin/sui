@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::bridge::BridgeValidatorProvider;
-use crate::peers::SuiPeer;
 use crate::{consumer::ProtobufDecoder, peers::SuiNodeProvider};
 use axum::{
     async_trait,
@@ -20,7 +19,7 @@ use once_cell::sync::Lazy;
 use prometheus::{proto::MetricFamily, register_counter_vec, CounterVec};
 use std::sync::Arc;
 use sui_tls::TlsConnectionInfo;
-use tracing::error;
+use tracing::{error, info};
 
 static MIDDLEWARE_OPS: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
@@ -76,6 +75,11 @@ pub async fn expect_valid_public_key(
     mut request: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, &'static str)> {
+    // Check if the request path matches "/publish/metrics"
+    if request.uri().path() != "/publish/metrics" {
+        return Ok(next.run(request).await);
+    }
+
     let Some(public_key) = tls_connect_info.public_key() else {
         error!("unable to obtain public key from connecting client");
         MIDDLEWARE_OPS
@@ -105,6 +109,12 @@ pub async fn expect_valid_bridge_key(
     mut request: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, &'static str)> {
+    // Check if the request path matches "/publish/bridge/metrics"
+    if request.uri().path() != "/publish/bridge/metrics" {
+        info!("skipping expect_valid_bridge_key for sui validator push");
+        return Ok(next.run(request).await);
+    }
+
     let Some(public_key) = tls_connect_info.public_key() else {
         error!("unable to obtain public key from connecting client");
         MIDDLEWARE_OPS
@@ -113,7 +123,10 @@ pub async fn expect_valid_bridge_key(
         return Err((StatusCode::FORBIDDEN, "unknown clients are not allowed"));
     };
     let Some(peer) = allower.get(public_key) else {
-        error!("node with unknown pub key tried to connect {}", public_key);
+        error!(
+            "bridge node with unknown pub key tried to connect {}",
+            public_key
+        );
         MIDDLEWARE_OPS
             .with_label_values(&[
                 "expect_valid_public_key",
@@ -122,11 +135,7 @@ pub async fn expect_valid_bridge_key(
             .inc();
         return Err((StatusCode::FORBIDDEN, "unknown clients are not allowed"));
     };
-    request.extensions_mut().insert(SuiPeer {
-        name: peer.name,
-        public_key: peer.public_key,
-        p2p_address: multiaddr::Multiaddr::empty(),
-    });
+    request.extensions_mut().insert(peer);
     Ok(next.run(request).await)
 }
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::bridge::BridgeValidatorProvider;
 use crate::config::{DynamicPeerValidationConfig, RemoteWriteConfig, StaticPeerValidationConfig};
-use crate::handlers::publish_metrics;
+use crate::handlers::{publish_bridge_metrics, publish_metrics};
 use crate::histogram_relay::HistogramRelay;
 use crate::ip::{is_private, to_multiaddr};
 use crate::middleware::{
@@ -112,13 +112,13 @@ pub fn app(
         .route_layer(middleware::from_fn(expect_content_length));
 
     // Add the sui_allower specific routes and middleware
-    if let Some(allower) = sui_allower {
-        router = add_sui_allower_routes(router, allower);
+    if let Some(sui_allower) = sui_allower {
+        router = add_sui_allower_routes(router, sui_allower);
     }
 
     // Add the bridge_allower specific routes and middleware
-    if let Some(allower) = bridge_allower {
-        router = add_bridge_allower_routes(router, allower);
+    if let Some(bridge_allower) = bridge_allower {
+        router = add_bridge_allower_routes(router, bridge_allower);
     }
 
     // Add common layers to the router
@@ -148,7 +148,7 @@ fn add_sui_allower_routes(router: Router, allower: SuiNodeProvider) -> Router {
 fn add_bridge_allower_routes(router: Router, allower: BridgeValidatorProvider) -> Router {
     allower.poll_peer_list();
     router
-        .route("/publish/bridge/metrics", post(publish_metrics)) // New route
+        .route("/publish/bridge/metrics", post(publish_bridge_metrics)) // New route
         .route_layer(middleware::from_fn(expect_valid_bridge_key)) // Bridge-specific middleware
         .layer(Extension(Arc::new(allower)))
 }
