@@ -75,11 +75,6 @@ pub async fn expect_valid_public_key(
     mut request: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, &'static str)> {
-    // Check if the request path matches "/publish/metrics"
-    if request.uri().path() != "/publish/metrics" {
-        return Ok(next.run(request).await);
-    }
-
     let Some(public_key) = tls_connect_info.public_key() else {
         error!("unable to obtain public key from connecting client");
         MIDDLEWARE_OPS
@@ -109,11 +104,6 @@ pub async fn expect_valid_bridge_key(
     mut request: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, &'static str)> {
-    // Check if the request path matches "/publish/bridge/metrics"
-    if request.uri().path() != "/publish/bridge/metrics" {
-        return Ok(next.run(request).await);
-    }
-
     let Some(public_key) = tls_connect_info.public_key() else {
         error!("unable to obtain public key from connecting client");
         MIDDLEWARE_OPS

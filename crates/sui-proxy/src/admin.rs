@@ -112,14 +112,22 @@ pub fn app(
         .route_layer(middleware::from_fn(expect_mysten_proxy_header))
         .route_layer(middleware::from_fn(expect_content_length));
 
-    // Add the sui_allower specific routes and middleware
+    // Scoped router for SuiNodeProvider, applied to /publish/metrics
     if let Some(sui_allower) = sui_allower {
-        router = add_sui_allower_routes(router, sui_allower);
+        let sui_router = Router::new()
+            .route("/publish/metrics", post(publish_metrics))
+            .route_layer(middleware::from_fn(expect_valid_public_key))
+            .layer(Extension(Arc::new(sui_allower)));
+        router = router.merge(sui_router);
     }
 
-    // Add the bridge_allower specific routes and middleware
+    // Scoped router for BridgeValidatorProvider, applied to /publish/bridge/metrics
     if let Some(bridge_allower) = bridge_allower {
-        router = add_bridge_allower_routes(router, bridge_allower);
+        let bridge_router = Router::new()
+            .route("/publish/bridge/metrics", post(publish_bridge_metrics))
+            .route_layer(middleware::from_fn(expect_valid_bridge_key))
+            .layer(Extension(Arc::new(bridge_allower)));
+        router = router.merge(bridge_router);
     }
 
     // Add common layers to the router
