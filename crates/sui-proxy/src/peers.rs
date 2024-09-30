@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use anyhow::{bail, Context, Result};
-use fastcrypto::ed25519::Ed25519PublicKey;
 use fastcrypto::encoding::Base64;
 use fastcrypto::encoding::Encoding;
 use fastcrypto::traits::ToFromBytes;
+use fastcrypto::{ed25519::Ed25519PublicKey, secp256r1::Secp256r1PublicKey};
 use futures::stream::{self, StreamExt};
 use once_cell::sync::Lazy;
 use prometheus::{register_counter_vec, register_histogram_vec};
@@ -67,10 +67,14 @@ pub struct SuiNodeProvider {
 }
 
 impl Allower for SuiNodeProvider {
-    fn allowed(&self, key: &Ed25519PublicKey) -> bool {
+    fn allowed_ed25519(&self, key: &Ed25519PublicKey) -> bool {
         self.static_nodes.read().unwrap().contains_key(key)
             || self.sui_nodes.read().unwrap().contains_key(key)
             || self.bridge_nodes.read().unwrap().contains_key(key)
+    }
+
+    fn allowed_secp256r1(&self, _key: &Secp256r1PublicKey) -> bool {
+        false // SuiNodeProvider only supports Ed25519 keys
     }
 }
 

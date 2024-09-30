@@ -8,10 +8,12 @@ use crate::middleware::{
 };
 use crate::peers::{AllowedPeer, SuiNodeProvider};
 use crate::var;
+use crate::walrus::{WalrusPeer, WalrusProvider};
 use anyhow::Error;
 use anyhow::Result;
 use axum::{extract::DefaultBodyLimit, middleware, routing::post, Extension, Router};
 use fastcrypto::ed25519::{Ed25519KeyPair, Ed25519PublicKey};
+use fastcrypto::secp256r1::Secp256r1PublicKey;
 use fastcrypto::traits::{KeyPair, ToFromBytes};
 use std::fs;
 use std::io::BufReader;
@@ -83,6 +85,12 @@ pub fn make_reqwest_client(settings: RemoteWriteConfig, user_agent: &str) -> Req
     }
 }
 
+pub enum AllowerKinds {
+    AllowAll,
+    Sui(SuiNodeProvider),
+    Walrus(WalrusProvider),
+}
+
 // Labels are adhoc labels we will inject per our config
 #[derive(Clone)]
 pub struct Labels {
@@ -95,7 +103,7 @@ pub fn app(
     labels: Labels,
     client: ReqwestClient,
     relay: HistogramRelay,
-    allower: Option<SuiNodeProvider>,
+    allower: Option<AllowerKinds>,
 ) -> Router {
     // build our application with a route and our sender mpsc
     let mut router = Router::new()
@@ -106,11 +114,26 @@ pub fn app(
         )))
         .route_layer(middleware::from_fn(expect_mysten_proxy_header))
         .route_layer(middleware::from_fn(expect_content_length));
-    if let Some(allower) = allower {
-        router = router
-            .route_layer(middleware::from_fn(expect_valid_public_key))
-            .layer(Extension(Arc::new(allower)));
+
+    match allower {
+        Some(AllowerKinds::AllowAll) => (),
+        Some(AllowerKinds::Sui(provider)) => {
+            router = router
+                .route_layer(middleware::from_fn(expect_valid_sui_node_public_key))
+                .layer(Extension(Arc::new(provider)));
+        }
+        Some(AllowerKinds::Walrus(provider)) => {
+            router = router
+                .route_layer(middleware::from_fn(expect_valid_public_key))
+                .layer(Extension(Arc::new(provider)));
+        }
+        None => (),
     }
+    // if let Some(allower) = allower {
+    //     router = router
+    //         .route_layer(middleware::from_fn(expect_valid_public_key))
+    //         .layer(Extension(Arc::new(allower)));
+    // }
     router
         .layer(Extension(relay))
         .layer(Extension(labels))
@@ -223,6 +246,33 @@ fn load_static_peers(
     Ok(static_keys)
 }
 
+/// load the static keys for Secp256r1 public keys
+fn load_static_peers_secp256r1(
+    static_peers: Option<StaticPeerValidationConfig>,
+) -> Result<Vec<WalrusPeer>, Error> {
+    let Some(static_peers) = static_peers else {
+        return Ok(vec![]);
+    };
+    let static_keys = static_peers
+        .pub_keys
+        .into_iter()
+        .map(|spk| {
+            let peer_id = hex::decode(spk.peer_id).unwrap();
+            let public_key = Secp256r1PublicKey::from_bytes(peer_id.as_ref()).unwrap();
+            let s = WalrusPeer {
+                name: spk.name.clone(),
+                public_key,
+            };
+            info!(
+                "loaded static peer: {} public key: {}",
+                &s.name, &s.public_key,
+            );
+            s
+        })
+        .collect();
+    Ok(static_keys)
+}
+
 /// Default allow mode for server, we don't verify clients, everything is accepted
 pub fn create_server_cert_default_allow(
     hostname: String,
@@ -237,10 +287,10 @@ pub fn create_server_cert_default_allow(
 
 /// Verify clients against sui blockchain, clients that are not found in sui_getValidators
 /// will be rejected
-pub fn create_server_cert_enforce_peer(
+pub fn create_server_cert_enforce_sui_peers(
     dynamic_peers: DynamicPeerValidationConfig,
     static_peers: Option<StaticPeerValidationConfig>,
-) -> Result<(ServerConfig, Option<SuiNodeProvider>), sui_tls::rustls::Error> {
+) -> Result<(ServerConfig, Option<AllowerKinds>), sui_tls::rustls::Error> {
     let (Some(certificate_path), Some(private_key_path)) =
         (dynamic_peers.certificate_file, dynamic_peers.private_key)
     else {
@@ -258,5 +308,30 @@ pub fn create_server_cert_enforce_peer(
             load_certs(&certificate_path),
             load_private_key(&private_key_path),
         )?;
-    Ok((c, Some(allower)))
+    Ok((c, Some(AllowerKinds::Sui(allower))))
+}
+
+/// Verify walrus storage nodes against sui blockchain, clients that are not found in TODO
+/// will be rejected
+pub fn create_server_cert_enforce_walrus_peers(
+    dynamic_peers: DynamicPeerValidationConfig,
+    static_peers: Option<StaticPeerValidationConfig>,
+) -> Result<(ServerConfig, Option<AllowerKinds>), sui_tls::rustls::Error> {
+    let (Some(certificate_path), Some(private_key_path)) =
+        (dynamic_peers.certificate_file, dynamic_peers.private_key)
+    else {
+        return Err(sui_tls::rustls::Error::General(
+            "missing certs to initialize server".into(),
+        ));
+    };
+    let static_peers = load_static_peers_secp256r1(static_peers).map_err(|e| {
+        sui_tls::rustls::Error::General(format!("unable to load static pub keys: {}", e))
+    })?;
+    let allower = WalrusProvider::new(static_peers);
+    let c = ClientCertVerifier::new(allower.clone(), SUI_VALIDATOR_SERVER_NAME.to_string())
+        .rustls_server_config(
+            load_certs(&certificate_path),
+            load_private_key(&private_key_path),
+        )?;
+    Ok((c, Some(AllowerKinds::Walrus(allower))))
 }

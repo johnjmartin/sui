@@ -18,6 +18,8 @@ pub struct ProxyConfig {
     pub static_peers: Option<StaticPeerValidationConfig>,
     pub metrics_address: String,
     pub histogram_address: String,
+    #[serde(default = "default_walrus_proxy")]
+    pub walrus_proxy: bool,
 }
 
 #[serde_as]
@@ -86,6 +88,10 @@ pub struct StaticPubKey {
 /// the default idle worker per host (reqwest to remote write url call)
 fn pool_max_idle_per_host_default() -> usize {
     8
+}
+
+fn default_walrus_proxy() -> bool {
+    false
 }
 
 /// the default hostname we will use if not provided

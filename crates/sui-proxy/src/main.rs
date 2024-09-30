@@ -6,8 +6,8 @@ use std::env;
 use sui_proxy::config::ProxyConfig;
 use sui_proxy::{
     admin::{
-        app, create_server_cert_default_allow, create_server_cert_enforce_peer,
-        make_reqwest_client, server, Labels,
+        app, create_server_cert_default_allow, create_server_cert_enforce_sui_peers,
+        create_server_cert_enforce_walrus_peers, make_reqwest_client, server, Labels,
     },
     config::load,
     histogram_relay, metrics,
@@ -66,8 +66,11 @@ async fn main() -> Result<()> {
                     .expect("unable to create self-signed server cert"),
                 None,
             )
+        } else if config.walrus_proxy {
+            create_server_cert_enforce_walrus_peers(config.dynamic_peers, config.static_peers)
+                .expect("unable to create tls server config")
         } else {
-            create_server_cert_enforce_peer(config.dynamic_peers, config.static_peers)
+            create_server_cert_enforce_sui_peers(config.dynamic_peers, config.static_peers)
                 .expect("unable to create tls server config")
         };
     let histogram_listener = std::net::TcpListener::bind(config.histogram_address).unwrap();

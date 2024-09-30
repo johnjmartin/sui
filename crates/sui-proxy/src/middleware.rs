@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
-use crate::{consumer::ProtobufDecoder, peers::SuiNodeProvider};
+use crate::consumer::ProtobufDecoder;
+use crate::{admin::AllowerKinds, peers::SuiNodeProvider};
 use axum::{
     async_trait,
     body::Body,
@@ -68,7 +69,7 @@ pub async fn expect_mysten_proxy_header(
 
 /// we expect that calling sui-nodes are known on the blockchain and we enforce
 /// their pub key tls creds here
-pub async fn expect_valid_public_key(
+pub async fn expect_valid_sui_node_public_key(
     Extension(allower): Extension<Arc<SuiNodeProvider>>,
     Extension(tls_connect_info): Extension<TlsConnectionInfo>,
     mut request: Request<Body>,
@@ -94,6 +95,12 @@ pub async fn expect_valid_public_key(
     request.extensions_mut().insert(peer);
     Ok(next.run(request).await)
 }
+
+// pub async fn expect_valid_walrus_public_key(
+//     Extension(allower): Extension<Arc<WalrusProvider>>,
+//     mut request: Request<Body>,
+//     next: Next,
+// ) -> Result<Response, (StatusCode, &'static str)> {
 
 // extractor that shows how to consume the request body upfront
 #[derive(Debug)]
