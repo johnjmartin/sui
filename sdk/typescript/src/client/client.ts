@@ -419,6 +419,9 @@ export class SuiClient {
 				Array.isArray(signature) ? signature : [signature],
 				options,
 			],
+			headers: {
+				'Sui-Transaction-Type': 'execute',
+			},
 		});
 
 		if (requestType === 'WaitForLocalExecution') {

@@ -235,4 +235,70 @@ describe('SuiHTTPTransport', () => {
 			await unsubscribe();
 		});
 	});
+
+	describe('executeTransactionBlock', () => {
+		const mockResult = { digest: 'mock-digest' };
+		let requestId = 0;
+
+		const fetch = vi.fn(() => {
+			requestId += 1;
+			return Promise.resolve(
+				new Response(
+					new TextEncoder().encode(
+						JSON.stringify({
+							jsonrpc: '2.0',
+							result: mockResult,
+							id: requestId,
+						}),
+					),
+					{
+						status: 200,
+					},
+				),
+			);
+		});
+
+		const transport = new SuiHTTPTransport({
+			url: 'http://localhost:4000',
+			rpc: {
+				url: 'http://localhost:4000',
+			},
+			fetch,
+		});
+
+		beforeEach(() => {
+			fetch.mockClear();
+		});
+
+		it('should set the transaction_type header when executing a transaction block', async () => {
+			const result = await transport.request({
+				method: 'sui_executeTransactionBlock',
+				params: ['mockTransactionBlock', ['mockSignature'], {}],
+				headers: {
+					'Sui-Transaction-Type': 'execute',
+				},
+			});
+
+			expect(fetch).toHaveBeenCalledTimes(1);
+
+			expect(fetch).toHaveBeenCalledWith('http://localhost:4000', {
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: requestId,
+					method: 'sui_executeTransactionBlock',
+					params: ['mockTransactionBlock', ['mockSignature'], {}],
+				}),
+				headers: {
+					'Content-Type': 'application/json',
+					'Client-Sdk-Type': 'typescript',
+					'Client-Sdk-Version': PACKAGE_VERSION,
+					'Client-Target-Api-Version': TARGETED_RPC_VERSION,
+					'Sui-Transaction-Type': 'execute',
+				},
+				method: 'POST',
+			});
+
+			expect(result).toEqual(mockResult);
+		});
+	});
 });

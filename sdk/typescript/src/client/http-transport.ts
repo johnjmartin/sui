@@ -27,6 +27,7 @@ export interface SuiHTTPTransportOptions {
 export interface SuiTransportRequestOptions {
 	method: string;
 	params: unknown[];
+	headers?: HttpHeaders;
 }
 
 // eslint-disable-next-line @typescript-eslint/ban-types
@@ -96,6 +97,7 @@ export class SuiHTTPTransport implements SuiTransport {
 				'Client-Sdk-Version': PACKAGE_VERSION,
 				'Client-Target-Api-Version': TARGETED_RPC_VERSION,
 				...this.#options.rpc?.headers,
+				...input.headers,
 			},
 			body: JSON.stringify({
 				jsonrpc: '2.0',
