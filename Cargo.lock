@@ -14047,6 +14047,7 @@ dependencies = [
  "mysten-metrics",
  "pingora",
  "pingora-load-balancing",
+ "pingora-timeout",
  "prometheus",
  "reqwest 0.12.5",
  "serde",

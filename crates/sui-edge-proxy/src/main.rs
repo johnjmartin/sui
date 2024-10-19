@@ -1,21 +1,24 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use clap::Parser;
+use http::{header, Response, StatusCode};
+use pingora::apps::http_app::ServeHttp;
 use serde_json::Value;
 use sui_edge_proxy::config::ProxyConfig;
 use sui_edge_proxy::{certificate::TLSCertCallback, config::PeerConfig};
 
 use async_trait::async_trait;
 use pingora::{
-    http::ResponseHeader,
     listeners::TlsSettings,
     prelude::{http_proxy_service, HttpPeer, ProxyHttp, Result, Session},
     server::Server,
+    services::listening::Service,
 };
 use pingora_load_balancing::{health_check, selection::RoundRobin, LoadBalancer};
 
 // use pingora::protocols::http::error_resp;
 
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 #[derive(Parser, Debug)]
@@ -47,6 +50,10 @@ fn main() -> Result<()> {
 
     let mut my_server = Server::new(None).unwrap();
     my_server.bootstrap();
+
+    // Add health check service
+    let health_check = health_check_service(&format!("0.0.0.0:9000"));
+    my_server.add_service(health_check);
 
     // todo: error handling
     let upstreams = LoadBalancer::try_from_iter(config.backends.read_nodes).unwrap();
@@ -132,7 +139,7 @@ impl ProxyHttp for LB {
         info!("upstream_peer");
 
         // Check if the "transaction_type" header is set to "execute"
-        if let Some(transaction_type) = session.req_header().headers.get("transaction_type") {
+        if let Some(transaction_type) = session.req_header().headers.get("Sui-Transaction-Type") {
             match transaction_type.to_str() {
                 Ok("execute") => {
                     info!("Proxying request for execute transaction");
@@ -217,4 +224,30 @@ impl ProxyHttp for LB {
 
 fn parse_json_body(body: &Bytes) -> Result<Value, serde_json::Error> {
     serde_json::from_slice(body)
+}
+
+// Add this new function for the health check service
+fn health_check_service(listen_addr: &str) -> Service<HealthCheckApp> {
+    let mut service = Service::new("Echo Service HTTP".to_string(), HealthCheckApp {});
+    service.add_tcp(listen_addr);
+    service
+}
+
+pub struct HealthCheckApp;
+
+#[async_trait]
+impl ServeHttp for HealthCheckApp {
+    async fn response(
+        &self,
+        _http_stream: &mut pingora::protocols::http::ServerSession,
+    ) -> Response<Vec<u8>> {
+        let body = Bytes::from("up");
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(http::header::CONTENT_TYPE, "text/html")
+            .header(http::header::CONTENT_LENGTH, body.len())
+            .body(body.to_vec())
+            .unwrap()
+    }
 }
