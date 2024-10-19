@@ -8,19 +8,9 @@ use std::net::SocketAddr;
 pub struct ProxyConfig {
     pub listen_address: String,
     pub metrics_address: Option<SocketAddr>,
-    pub backends: BackendConfig,
-    pub chain_identifier: String,
     pub tls: Option<TlsConfig>,
-    pub local_override: bool,
-    pub custom_peer: PeerConfig,
-    pub default_peer: PeerConfig,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct BackendConfig {
-    pub read_nodes: Vec<String>,
-    pub execution_nodes: Vec<String>,
+    pub execution_peer: PeerConfig,
+    pub read_peer: PeerConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

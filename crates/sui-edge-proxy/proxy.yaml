@@ -1,27 +1,12 @@
-listen-address: "0.0.0.0:6188"
-metrics-address: "0.0.0.0:9191"
+listen-address: '0.0.0.0:6188'
+metrics-address: '0.0.0.0:9191'
 
-backends:
-  read-nodes:
-    - "fullnode.mainnet.sui.io:443"
-  execution-nodes:
-    - "euw2-testnet-execution-service.benchmark-rpc-testnet.svc.clusterset.local:9000"
-
-# tls:
-#   cert-path: "/Users/johnmartin/src/github.com/johnjmartin/sui/keys/cert.crt"
-#   key-path: "/Users/johnmartin/src/github.com/johnjmartin/sui/keys/key.pem"
-#   sni: "fullnode.mainnet.sui.io"
-
-custom-peer:
-  address: "euw2-testnet-benchmark-service.benchmark-rpc-testnet.svc.clusterset.local:9000"
+execution-peer:
+  address: 'euw2-testnet-benchmark-service.benchmark-rpc-testnet.svc.clusterset.local:9000'
   use-tls: false
-  sni: "euw2-testnet-benchmark-service.benchmark-rpc-testnet.svc.clusterset.local"
+  sni: 'euw2-testnet-benchmark-service.benchmark-rpc-testnet.svc.clusterset.local'
 
-default-peer:
-  address: "fullnode.mainnet.sui.io:443"
+read-peer:
+  address: 'benchmark-rpc.sui-testnet.mystenlabs.com:443'
   use-tls: true
-  sni: "fullnode.mainnet.sui.io"
-
-local-override: false
-
-chain-identifier: "testnet"
+  sni: 'benchmark-rpc.sui-testnet.mystenlabs.com'

@@ -1,12 +1,8 @@
 use async_trait::async_trait;
 use pingora::{
-    listeners::{TlsAccept, TlsSettings},
-    prelude::http_proxy_service,
-    server::configuration::ServerConf,
-    services::listening::Service,
+    listeners::TlsAccept,
     tls::{self, ssl},
 };
-use std::sync::Arc;
 use tracing::debug;
 
 pub struct TLSCertCallback {
