@@ -2,9 +2,9 @@ listen-address: '0.0.0.0:6188'
 metrics-address: '0.0.0.0:9191'
 
 execution-peer:
-  address: 'euw2-testnet-benchmark-service.benchmark-rpc-testnet.svc.clusterset.local:9000'
-  use-tls: false
-  sni: 'euw2-testnet-benchmark-service.benchmark-rpc-testnet.svc.clusterset.local'
+  address: 'fullnode.testnet.sui.io:443'
+  use-tls: true
+  sni: 'fullnode.testnet.sui.io'
 
 read-peer:
   address: 'benchmark-rpc.sui-testnet.mystenlabs.com:443'

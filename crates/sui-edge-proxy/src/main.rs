@@ -2,6 +2,7 @@ use bytes::Bytes;
 use clap::Parser;
 use http::{Response, StatusCode};
 use pingora::apps::http_app::ServeHttp;
+use pingora::protocols::Digest;
 use sui_edge_proxy::config::ProxyConfig;
 use sui_edge_proxy::{certificate::TLSCertCallback, config::PeerConfig};
 
@@ -16,7 +17,6 @@ use pingora::{
 // use pingora_load_balancing::{health_check, selection::RoundRobin, LoadBalancer};
 
 // use pingora::protocols::http::error_resp;
-
 use tracing::{debug, info, warn};
 
 #[derive(Parser, Debug)]
@@ -50,9 +50,25 @@ fn main() -> Result<()> {
     let health_check = health_check_service(&format!("0.0.0.0:9000"));
     my_server.add_service(health_check);
 
+    // Initialize reusable HttpPeer instances
+    let read_peer = Arc::new(HttpPeer::new(
+        config.read_peer.address.clone(),
+        config.read_peer.use_tls,
+        config.read_peer.sni.clone(),
+    ));
+
+    let execution_peer = Arc::new(HttpPeer::new(
+        config.execution_peer.address.clone(),
+        config.execution_peer.use_tls,
+        config.execution_peer.sni.clone(),
+    ));
+
     let mut lb = http_proxy_service(
         &my_server.configuration,
-        LB(config.read_peer, config.execution_peer),
+        LB {
+            read_peer,
+            execution_peer,
+        },
     );
 
     if let Some(tls_config) = config.tls {
@@ -73,55 +89,131 @@ fn main() -> Result<()> {
     my_server.run_forever();
 }
 
-pub struct LB(PeerConfig, PeerConfig);
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+pub struct TimingContext {
+    start_time: Instant,
+    phase_timings: Vec<(String, Duration)>,
+}
+
+impl TimingContext {
+    pub fn new() -> Self {
+        Self {
+            start_time: Instant::now(),
+            phase_timings: Vec::new(),
+        }
+    }
+
+    pub fn record_phase(&mut self, phase: &str, start: Instant) {
+        let duration = start.elapsed();
+        self.phase_timings.push((phase.to_string(), duration));
+    }
+
+    pub fn total_duration(&self) -> Duration {
+        self.start_time.elapsed()
+    }
+}
+
+pub struct LB {
+    read_peer: Arc<HttpPeer>,
+    execution_peer: Arc<HttpPeer>,
+}
 
 #[async_trait]
 impl ProxyHttp for LB {
-    type CTX = ();
-    fn new_ctx(&self) -> Self::CTX {}
+    type CTX = TimingContext;
+
+    fn new_ctx(&self) -> Self::CTX {
+        TimingContext::new()
+    }
 
     async fn upstream_peer(
         &self,
         session: &mut Session,
-        _ctx: &mut Self::CTX,
+        ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
-        info!("upstream_peer");
+        let phase_start = Instant::now();
 
-        // Check if the "transaction_type" header is set to "execute"
-        if let Some(transaction_type) = session.req_header().headers.get("Sui-Transaction-Type") {
+        let peer = if let Some(transaction_type) =
+            session.req_header().headers.get("Sui-Transaction-Type")
+        {
             match transaction_type.to_str() {
                 Ok("execute") => {
-                    info!("Proxying request for execute transaction");
-
-                    // Create a new HttpPeer with the custom upstream
-                    let peer = Box::new(HttpPeer::new(
-                        self.1.address.clone(),
-                        self.1.use_tls,
-                        self.1.sni.clone(),
-                    ));
-
-                    info!("returning read peer");
-                    debug!("{:?}", peer);
-                    return Ok(peer);
+                    info!("Using execution peer");
+                    self.execution_peer.clone()
                 }
                 Ok(_) => {
-                    // Transaction type is not "execute", continue with default behavior
+                    info!("Using read peer");
+                    self.read_peer.clone()
                 }
                 Err(e) => {
-                    // Log the error and continue with default behavior
                     warn!("Failed to read transaction_type header: {}", e);
+                    self.read_peer.clone()
                 }
             }
+        } else {
+            self.read_peer.clone()
+        };
+
+        // try hardcoding the http version to h2
+        let mut new_peer = (*peer).clone();
+        new_peer.options.set_http_version(2, 2);
+        ctx.record_phase("upstream_peer", phase_start);
+
+        Ok(Box::new((new_peer).clone()))
+    }
+
+    async fn connected_to_upstream(
+        &self,
+        _session: &mut Session,
+        _reused: bool,
+        peer: &HttpPeer,
+        _fd: std::os::unix::io::RawFd,
+        _digest: Option<&Digest>,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        let phase_start = Instant::now();
+        ctx.record_phase("connected_to_upstream", phase_start);
+        if !matches!(peer.options.alpn, pingora::protocols::ALPN::H2) {
+            warn!("Upstream peer is not using h2");
         }
-        // Create a new HttpPeer with the read peer
-        let peer = Box::new(HttpPeer::new(
-            self.0.address.clone(),
-            self.0.use_tls,
-            self.0.sni.clone(),
-        ));
-        info!("returning read peer");
-        debug!("{:?}", peer);
-        Ok(peer)
+        info!("Upstream peer is using {:?}", peer.options.alpn);
+        Ok(())
+    }
+
+    fn upstream_response_filter(
+        &self,
+        _session: &mut Session,
+        _upstream_response: &mut pingora::http::ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) {
+        let phase_start = Instant::now();
+        ctx.record_phase("upstream_response_filter", phase_start);
+    }
+
+    async fn response_filter(
+        &self,
+        _session: &mut Session,
+        _upstream_response: &mut pingora::http::ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        let phase_start = Instant::now();
+        ctx.record_phase("response_filter", phase_start);
+        Ok(())
+    }
+    async fn logging(
+        &self,
+        _session: &mut Session,
+        _e: Option<&pingora::Error>,
+        ctx: &mut Self::CTX,
+    ) {
+        let total_duration = ctx.total_duration();
+        info!("Total request duration: {:?}", total_duration);
+
+        for (phase, duration) in &ctx.phase_timings {
+            info!("Phase {} took {:?}", phase, duration);
+        }
     }
 }
 
