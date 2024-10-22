@@ -142,6 +142,7 @@ impl DBCheckpointHandler {
     pub fn start(self: Arc<Self>) -> tokio::sync::broadcast::Sender<()> {
         let (kill_sender, _kill_receiver) = tokio::sync::broadcast::channel::<()>(1);
         if self.output_object_store.is_some() {
+            info!("DB checkpoint upload loop started");
             tokio::task::spawn(Self::run_db_checkpoint_upload_loop(
                 self.clone(),
                 kill_sender.subscribe(),

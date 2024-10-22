@@ -644,6 +644,11 @@ impl SuiNode {
 
         // Start uploading db checkpoints to remote store
         info!("start db checkpoint");
+        info!(
+            "uploading db checkpoint for epoch {:?}",
+            epoch_store.epoch()
+        );
+
         let (db_checkpoint_config, db_checkpoint_handle) = Self::start_db_checkpoint(
             &config,
             &prometheus_registry,

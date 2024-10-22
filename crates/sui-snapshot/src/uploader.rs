@@ -77,6 +77,7 @@ impl StateSnapshotUploader {
         registry: &Registry,
         checkpoint_store: Arc<CheckpointStore>,
     ) -> Result<Arc<Self>> {
+        info!("Initializing StateSnapshotUploader");
         let db_checkpoint_store_config = ObjectStoreConfig {
             object_store: Some(ObjectStoreType::File),
             directory: Some(db_checkpoint_path.to_path_buf()),
@@ -87,7 +88,7 @@ impl StateSnapshotUploader {
             directory: Some(staging_path.to_path_buf()),
             ..Default::default()
         };
-        Ok(Arc::new(StateSnapshotUploader {
+        let uploader = Arc::new(StateSnapshotUploader {
             db_checkpoint_path: db_checkpoint_path.to_path_buf(),
             db_checkpoint_store: db_checkpoint_store_config.make()?,
             checkpoint_store,
@@ -96,20 +97,28 @@ impl StateSnapshotUploader {
             snapshot_store: snapshot_store_config.make()?,
             interval: Duration::from_secs(interval_s),
             metrics: StateSnapshotUploaderMetrics::new(registry),
-        }))
+        });
+        info!("StateSnapshotUploader initialized successfully");
+        Ok(uploader)
     }
 
     pub fn start(self: Arc<Self>) -> tokio::sync::broadcast::Sender<()> {
+        info!("Starting StateSnapshotUploader tasks");
         let (kill_sender, _kill_receiver) = tokio::sync::broadcast::channel::<()>(1);
         tokio::task::spawn(Self::run_upload_loop(self.clone(), kill_sender.subscribe()));
         tokio::task::spawn(run_manifest_update_loop(
             self.snapshot_store.clone(),
             kill_sender.subscribe(),
         ));
+        info!("StateSnapshotUploader tasks started");
         kill_sender
     }
 
     async fn upload_state_snapshot_to_object_store(&self, missing_epochs: Vec<u64>) -> Result<()> {
+        info!(
+            "Starting state snapshot upload process for missing epochs: {:?}",
+            missing_epochs
+        );
         let last_missing_epoch = missing_epochs.last().cloned().unwrap_or(0);
         let local_checkpoints_by_epoch =
             find_all_dirs_with_epoch_prefix(&self.db_checkpoint_store, None).await?;
@@ -139,6 +148,7 @@ impl StateSnapshotUploader {
                     .last()
                     .expect("Expected at least one commitment")
                     .clone();
+                info!("Writing state snapshot for epoch: {}", *epoch);
                 state_snapshot_writer
                     .write(*epoch, db, state_hash_commitment)
                     .await?;
@@ -170,6 +180,7 @@ impl StateSnapshotUploader {
                 info!("State snapshot skipped for epoch: {epoch}");
             }
         }
+        info!("State snapshot upload process completed");
         Ok(())
     }
 
@@ -182,28 +193,46 @@ impl StateSnapshotUploader {
         loop {
             tokio::select! {
                 _now = interval.tick() => {
+                    debug!("Checking for missing epochs");
                     let missing_epochs = self.get_missing_epochs().await;
-                    if let Ok(epochs) = missing_epochs {
-                        let first_missing_epoch = epochs.first().cloned().unwrap_or(0);
-                        self.metrics.first_missing_state_snapshot_epoch.set(first_missing_epoch as i64);
-                        if let Err(err) = self.upload_state_snapshot_to_object_store(epochs).await {
-                            self.metrics.state_snapshot_upload_err.inc();
-                            error!("Failed to upload state snapshot to remote store with err: {:?}", err);
-                        } else {
-                            debug!("Successfully completed snapshot upload loop");
+                    match missing_epochs {
+                        Ok(epochs) => {
+                            let first_missing_epoch = epochs.first().cloned().unwrap_or(0);
+                            info!("First missing epoch: {}", first_missing_epoch);
+                            self.metrics.first_missing_state_snapshot_epoch.set(first_missing_epoch as i64);
+
+                            if epochs.is_empty() {
+                                debug!("No missing epochs found");
+                            } else {
+                                info!("Uploading state snapshots for epochs: {:?}", epochs);
+                                match self.upload_state_snapshot_to_object_store(epochs).await {
+                                    Ok(_) => info!("Successfully completed snapshot upload loop"),
+                                    Err(err) => {
+                                        self.metrics.state_snapshot_upload_err.inc();
+                                        error!("Failed to upload state snapshot to remote store: {:?}", err);
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        error!("Failed to find missing state snapshot in remote store");
+                        Err(err) => {
+                            error!("Failed to find missing state snapshots in remote store: {:?}", err);
+                        }
                     }
                 },
-                _ = recv.recv() => break,
+                _ = recv.recv() => {
+                    info!("Received shutdown signal, stopping state snapshot uploader loop");
+                    break;
+                }
             }
         }
+        info!("State snapshot uploader loop stopped");
         Ok(())
     }
 
     async fn get_missing_epochs(&self) -> Result<Vec<u64>> {
+        debug!("Fetching missing epochs");
         let missing_epochs = find_missing_epochs_dirs(&self.snapshot_store, SUCCESS_MARKER).await?;
+        debug!("Found {} missing epochs", missing_epochs.len());
         Ok(missing_epochs.to_vec())
     }
 }
