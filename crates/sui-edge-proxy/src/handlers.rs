@@ -136,7 +136,6 @@ async fn proxy_request(
 
     // remove host header to avoid interfering with reqwest auto-host header
     let mut headers = parts.headers.clone();
-    headers.remove("host");
     let request_builder = state
         .client
         .request(parts.method.clone(), target_url)
