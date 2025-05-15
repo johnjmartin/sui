@@ -287,6 +287,29 @@ impl Default for PolicyConfig {
     }
 }
 
+impl PolicyConfig {
+    pub fn default_dos_protection_policy() -> PolicyConfig {
+        let mut config = PolicyConfig::default();
+        let mut spam_policy = FreqThresholdConfig::default();
+        spam_policy.client_threshold = 500;
+        spam_policy.window_size_secs = 5;
+        spam_policy.update_interval_secs = 1;
+
+        let mut error_policy = FreqThresholdConfig::default();
+        error_policy.client_threshold = 50;
+        error_policy.window_size_secs = 5;
+        error_policy.update_interval_secs = 1;
+
+        config.client_id_source = ClientIdSource::SocketAddr;
+        config.spam_policy_type = PolicyType::FreqThreshold(spam_policy);
+        config.error_policy_type = PolicyType::FreqThreshold(error_policy);
+        config.channel_capacity = 6000;
+        config.spam_sample_rate = Weight::new(1.0).unwrap();
+        config.dry_run = true;
+        config
+    }
+}
+
 pub fn default_client_id_source() -> ClientIdSource {
     ClientIdSource::SocketAddr
 }
