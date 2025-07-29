@@ -154,8 +154,8 @@ impl CheckpointMetrics {
             .unwrap(),
             checkpoint_fork_crash_mode: register_int_gauge_vec_with_registry!(
                 "checkpoint_fork_crash_mode",
-                "Indicates node is in crash mode due to checkpoint fork with fork details",
-                &["checkpoint_seq", "detected_at", "digest_prefix"],
+                "Indicates node is in crash mode due to fork with fork details",
+                &["fork_type", "identifier", "detected_at", "digest_prefix"],
                 registry
             )
             .unwrap(),

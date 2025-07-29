@@ -263,8 +263,6 @@ pub struct SuiNode {
     /// Broadcast channel to notify state-sync for new validator peers.
     trusted_peer_change_tx: watch::Sender<TrustedPeerChangeEvent>,
 
-    checkpoint_fork_cleared_notification: broadcast::Sender<()>,
-
     backpressure_manager: Arc<BackpressureManager>,
 
     _db_checkpoint_handle: Option<tokio::sync::broadcast::Sender<()>>,
@@ -487,16 +485,41 @@ impl SuiNode {
         ));
 
         let checkpoint_store = CheckpointStore::new(&config.db_path().join("checkpoints"));
-
         let checkpoint_metrics = CheckpointMetrics::new(&registry_service.default_registry());
-        let (checkpoint_fork_cleared_notification, _) = broadcast::channel(1);
 
-        Self::check_and_handle_checkpoint_fork(
-            &checkpoint_store,
-            &checkpoint_metrics,
-            &checkpoint_fork_cleared_notification,
-        )
-        .await?;
+        // If fork recovery is enabled, and the fork matches the fork recovery config, clear the fork detected markers from the DB and allow node to startup properly
+        if let Some(fork_recovery) = &config.fork_recovery {
+            if !fork_recovery.transaction_overrides.is_empty() {
+                if let Some(tx_fork_detected) = checkpoint_store.get_transaction_fork_detected()? {
+                    if fork_recovery
+                        .transaction_overrides
+                        .contains_key(&tx_fork_detected.0.to_string())
+                    {
+                        info!("Fork recovery is enabled, clearing transaction fork detected marker from the DB: {:?}", tx_fork_detected);
+                        checkpoint_store
+                            .clear_transaction_fork_detected()
+                            .expect("Failed to clear transaction fork detected marker");
+                    }
+                }
+            }
+            if !fork_recovery.checkpoint_overrides.is_empty() {
+                if let Some(checkpoint_fork_detected) =
+                    checkpoint_store.get_checkpoint_fork_detected()?
+                {
+                    if fork_recovery
+                        .checkpoint_overrides
+                        .contains_key(&checkpoint_fork_detected.0)
+                    {
+                        info!("Fork recovery is enabled, clearing checkpoint fork detected marker from the DB: {:?}", checkpoint_fork_detected);
+                        checkpoint_store
+                            .clear_checkpoint_fork_detected()
+                            .expect("Failed to clear checkpoint fork detected marker");
+                    }
+                }
+            }
+        }
+
+        Self::check_and_handle_checkpoint_fork(&checkpoint_store, &checkpoint_metrics)?;
 
         let mut pruner_db = None;
         if config
@@ -915,7 +938,6 @@ impl SuiNode {
             end_of_epoch_channel,
             connection_monitor_status,
             trusted_peer_change_tx,
-            checkpoint_fork_cleared_notification,
             backpressure_manager,
 
             _db_checkpoint_handle: db_checkpoint_handle,
@@ -2115,12 +2137,10 @@ impl SuiNode {
         self.randomness_handle.clone()
     }
 
-    /// Check for previously detected checkpoint fork and handle it accordingly.
-    /// If a fork is detected, this function will halt startup until the fork is cleared via admin API.
-    async fn check_and_handle_checkpoint_fork(
+    /// Check for previously detected forks and block node startup if detected.
+    fn check_and_handle_checkpoint_fork(
         checkpoint_store: &CheckpointStore,
         checkpoint_metrics: &CheckpointMetrics,
-        checkpoint_fork_cleared_notification: &broadcast::Sender<()>,
     ) -> Result<()> {
         if let Some((checkpoint_seq, checkpoint_digest)) = checkpoint_store
             .get_checkpoint_fork_detected()
@@ -2129,13 +2149,6 @@ impl SuiNode {
                 e
             })?
         {
-            error!(
-                checkpoint_seq = checkpoint_seq,
-                checkpoint_digest = ?checkpoint_digest,
-                "Checkpoint fork detected! Node startup halted."
-            );
-
-            // Set the crash mode metric with detailed labels
             let digest_str = format!("{:?}", checkpoint_digest);
             let digest_prefix = if digest_str.len() >= 5 {
                 &digest_str[0..5]
@@ -2151,33 +2164,61 @@ impl SuiNode {
             checkpoint_metrics
                 .checkpoint_fork_crash_mode
                 .with_label_values(&[
+                    "checkpoint",
                     &checkpoint_seq.to_string(),
                     &detected_at.to_string(),
                     digest_prefix,
                 ])
                 .set(1);
 
-            // Keep the node running but in a halted state to allow admin API access
-            // Wait for notification from admin API that fork has been cleared
-            let mut fork_cleared_rx = checkpoint_fork_cleared_notification.subscribe();
-            tokio::select! {
-                _ = fork_cleared_rx.recv() => {
-                    info!("Checkpoint fork cleared via admin API - resuming startup");
+            loop {
+                error!(
+                    checkpoint_seq = checkpoint_seq,
+                    checkpoint_digest = ?checkpoint_digest,
+                    "Checkpoint fork detected! Node startup halted."
+                );
+                std::thread::sleep(std::time::Duration::from_secs(10));
+            }
+        }
 
-                    // Clear the crash mode metric
-                    checkpoint_metrics
-                        .checkpoint_fork_crash_mode
-                        .with_label_values(&[
-                            &checkpoint_seq.to_string(),
-                            &detected_at.to_string(),
-                            digest_prefix,
-                        ])
-                        .set(0);
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    info!("Received shutdown signal while waiting for fork clearance");
-                    return Err(anyhow!("Node shutdown requested while in fork detection state"));
-                }
+        // Check for transaction fork
+        if let Some((tx_digest, expected_effects_digest, actual_effects_digest)) = checkpoint_store
+            .get_transaction_fork_detected()
+            .map_err(|e| {
+                error!("Failed to check for transaction fork: {:?}", e);
+                e
+            })?
+        {
+            let digest_str = format!("{:?}", tx_digest);
+            let digest_prefix = if digest_str.len() >= 5 {
+                &digest_str[0..5]
+            } else {
+                &digest_str
+            };
+
+            let detected_at = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            checkpoint_metrics
+                .checkpoint_fork_crash_mode
+                .with_label_values(&[
+                    "transaction",
+                    &tx_digest.to_string(),
+                    &detected_at.to_string(),
+                    digest_prefix,
+                ])
+                .set(1);
+
+            loop {
+                error!(
+                    tx_digest = ?tx_digest,
+                    expected_effects_digest = ?expected_effects_digest,
+                    actual_effects_digest = ?actual_effects_digest,
+                    "Transaction fork detected! Node startup halted."
+                );
+                std::thread::sleep(std::time::Duration::from_secs(10));
             }
         }
 
