@@ -1013,6 +1013,11 @@ impl CheckpointStore {
             checkpoint_digest = ?checkpoint_digest,
             "Recording checkpoint fork detection in database"
         );
+        
+        // Fail point for testing
+        #[cfg(msim)]
+        fail_point_arg!("checkpoint_fork_detected", |_: ()| ());
+        
         self.tables.watermarks.insert(
             &CheckpointWatermark::CheckpointForkDetected,
             &(checkpoint_seq, checkpoint_digest),
@@ -1045,6 +1050,11 @@ impl CheckpointStore {
             actual_effects_digest = ?actual_effects_digest,
             "Recording transaction fork detection in database"
         );
+        
+        // Fail point for testing
+        #[cfg(msim)]
+        fail_point_arg!("transaction_fork_detected", |_: ()| ());
+        
         self.tables.transaction_fork_detected.insert(
             &0u8, // Single key since we only expect one transaction fork at a time
             &(tx_digest, expected_effects_digest, actual_effects_digest),
