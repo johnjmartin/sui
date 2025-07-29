@@ -2162,7 +2162,7 @@ impl SuiNode {
                 .as_secs();
 
             checkpoint_metrics
-                .checkpoint_fork_crash_mode
+                .fork_crash_mode
                 .with_label_values(&[
                     "checkpoint",
                     &checkpoint_seq.to_string(),
@@ -2202,7 +2202,7 @@ impl SuiNode {
                 .as_secs();
 
             checkpoint_metrics
-                .checkpoint_fork_crash_mode
+                .fork_crash_mode
                 .with_label_values(&[
                     "transaction",
                     &tx_digest.to_string(),
