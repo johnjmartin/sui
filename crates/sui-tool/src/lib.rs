@@ -54,7 +54,7 @@ use sui_core::storage::RocksDbStore;
 use sui_snapshot::reader::StateSnapshotReaderV1;
 use sui_snapshot::setup_db_state;
 use sui_storage::object_store::ObjectStoreGetExt;
-use sui_storage::object_store::util::{copy_file, exists, get_path};
+use sui_storage::object_store::util::{copy_file, get_path};
 use sui_types::messages_checkpoint::{CheckpointCommitment, ECMHLiveObjectSetDigest};
 use sui_types::messages_grpc::{
     ObjectInfoRequest, ObjectInfoRequestKind, ObjectInfoResponse, TransactionInfoRequest,
@@ -71,6 +71,8 @@ pub mod commands;
 #[cfg(not(tidehunter))]
 pub mod db_tool;
 mod formal_snapshot_util;
+mod snapshot_config;
+mod storage;
 
 #[derive(
     Clone, Serialize, Deserialize, Debug, PartialEq, Copy, PartialOrd, Ord, Eq, ValueEnum, Default,
@@ -723,51 +725,27 @@ fn start_summary_sync(
 }
 
 pub async fn get_latest_available_epoch(
-    snapshot_store_config: &ObjectStoreConfig,
+    storage: &Arc<dyn crate::storage::Storage + Send + Sync>,
 ) -> Result<u64, anyhow::Error> {
-    let remote_object_store = if snapshot_store_config.no_sign_request {
-        snapshot_store_config.make_http()?
-    } else {
-        snapshot_store_config.make().map(Arc::new)?
-    };
-    let manifest_contents = remote_object_store
-        .get_bytes(&get_path(MANIFEST_FILENAME))
-        .await?;
+    use anyhow::Context as _;
+
+    let manifest_contents = storage
+        .get(MANIFEST_FILENAME.into())
+        .await
+        .context("Failed to fetch MANIFEST")?;
+
     let root_manifest: Manifest = serde_json::from_slice(&manifest_contents)
-        .map_err(|err| anyhow!("Error parsing MANIFEST from bytes: {}", err))?;
+        .context("Error parsing MANIFEST from bytes")?;
+
     let epoch = root_manifest
         .available_epochs
         .iter()
         .max()
-        .ok_or(anyhow!("No snapshot found in manifest"))?;
+        .ok_or_else(|| anyhow!("No snapshot found in manifest"))?;
+
     Ok(*epoch)
 }
 
-pub async fn check_completed_snapshot(
-    snapshot_store_config: &ObjectStoreConfig,
-    epoch: EpochId,
-) -> Result<(), anyhow::Error> {
-    let success_marker = format!("epoch_{}/_SUCCESS", epoch);
-    let remote_object_store = if snapshot_store_config.no_sign_request {
-        snapshot_store_config.make_http()?
-    } else {
-        snapshot_store_config.make().map(Arc::new)?
-    };
-    if exists(&remote_object_store, &get_path(success_marker.as_str())).await {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "missing success marker at {}/{}",
-            snapshot_store_config.bucket.as_ref().unwrap_or(
-                &snapshot_store_config
-                    .clone()
-                    .aws_endpoint
-                    .unwrap_or("unknown_bucket".to_string())
-            ),
-            success_marker
-        ))
-    }
-}
 
 pub async fn download_formal_snapshot(
     path: &Path,

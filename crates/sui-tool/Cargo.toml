@@ -28,6 +28,10 @@ tracing.workspace = true
 prometheus.workspace = true
 object_store.workspace = true
 indicatif.workspace = true
+url.workspace = true
+bytes.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
 consensus-core.workspace = true
 mysten-metrics.workspace = true
 

@@ -16770,8 +16770,10 @@ dependencies = [
  "anemo",
  "anemo-cli",
  "anyhow",
+ "async-trait",
  "bcs",
  "bin-version",
+ "bytes",
  "clap",
  "colored",
  "comfy-table",
@@ -16787,6 +16789,7 @@ dependencies = [
  "num_cpus",
  "object_store",
  "prometheus",
+ "reqwest 0.12.9",
  "ron",
  "serde",
  "serde_json",
@@ -16809,6 +16812,7 @@ dependencies = [
  "tokio",
  "tracing",
  "typed-store",
+ "url",
 ]
 
 [[package]]
